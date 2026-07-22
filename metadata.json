@@ -1,0 +1,6 @@
+{
+  "name": "StudioEQ",
+  "description": "Tactile Mobile Parametric & Graphic Equalizer with DSP frequency response modeling and AutoEQ target matching.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
