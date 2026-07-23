@@ -73,6 +73,7 @@ fun EqGraphCanvas(
     val maxDb = 18.0f
 
     var activeDragBandId by remember { mutableStateOf<Int?>(null) }
+    var lastHapticGain by remember { mutableStateOf(0f) }
 
     val isClipping = peakGainDb > 0.1f
 
@@ -196,6 +197,12 @@ fun EqGraphCanvas(
 
                                     val freq = 10.0f.pow(minFreqLog + normX * (maxFreqLog - minFreqLog))
                                     val gain = maxDb - normY * (maxDb - minDb)
+
+                                    val roundedGain = kotlin.math.round(gain)
+                                    if (roundedGain != lastHapticGain) {
+                                        lastHapticGain = roundedGain
+                                        view.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
+                                    }
 
                                     onBandUpdate(bandId, freq.coerceIn(20f, 20000f), gain.coerceIn(-18f, 18f))
                                 }

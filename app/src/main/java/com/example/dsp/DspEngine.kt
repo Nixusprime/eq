@@ -187,13 +187,13 @@ object DspEngine {
     /**
      * Compute magnitude response in dB for a single band at frequency fHz.
      */
-    fun computeBandGainDb(band: EqBand, fHz: Float, sampleRate: Float = DEFAULT_SAMPLE_RATE): Float {
+    fun computeBandGainDb(band: EqBand, fHz: Float, sampleRate: Float = DEFAULT_SAMPLE_RATE, qScale: Float = 1.0f): Float {
         if (!band.enabled) return 0.0f
 
         val fs = sampleRate.toDouble()
         val f0 = band.frequencyHz.toDouble().coerceIn(10.0, 22000.0)
         val gainDb = band.gainDb.toDouble()
-        val q = band.qFactor.toDouble().coerceAtLeast(0.05)
+        val q = (band.qFactor * qScale).toDouble().coerceAtLeast(0.05)
 
         val w0 = 2.0 * PI * f0 / fs
         val cosW0 = cos(w0)
@@ -284,7 +284,7 @@ object DspEngine {
     /**
      * Compute total EQ response curve array across all frequencies for given bands + preamp.
      */
-    fun computeTotalResponseCurve(bands: List<EqBand>, preampDb: Float, sampleRate: Float = DEFAULT_SAMPLE_RATE): FloatArray {
+    fun computeTotalResponseCurve(bands: List<EqBand>, preampDb: Float, sampleRate: Float = DEFAULT_SAMPLE_RATE, qScale: Float = 1.0f): FloatArray {
         val total = FloatArray(NUM_FREQ_POINTS)
         val freqs = frequenciesHz
 
@@ -293,7 +293,7 @@ object DspEngine {
             val f = freqs[i]
             for (band in bands) {
                 if (band.enabled) {
-                    sum += computeBandGainDb(band, f, sampleRate)
+                    sum += computeBandGainDb(band, f, sampleRate, qScale)
                 }
             }
             total[i] = sum.coerceIn(-30.0f, 30.0f)

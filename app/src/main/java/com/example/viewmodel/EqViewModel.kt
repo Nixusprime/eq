@@ -1,6 +1,7 @@
 package com.example.viewmodel
 
 import android.app.Application
+import android.content.Context
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.audio.AudioPlayerManager
@@ -17,6 +18,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -38,7 +40,8 @@ data class EqUiState(
     val activeTarget: ReferenceTarget? = null,
     val isGraphicEqMode: Boolean = false,
     val themeMode: AppThemeMode = AppThemeMode.DARK,
-    val showPresetOverlay: Boolean = false
+    val showPresetOverlay: Boolean = false,
+    val qFactorScale: Float = 1.0f
 )
 
 private data class HistorySnapshot(
@@ -68,6 +71,8 @@ class EqViewModel(application: Application) : AndroidViewModel(application) {
     // Database flow of user presets
     val userPresets: StateFlow<List<PresetEntity>>
 
+    private val prefs = application.getSharedPreferences("studio_eq_prefs", Context.MODE_PRIVATE)
+
     init {
         val database = EqDatabase.getDatabase(application)
         repository = EqRepository(database.presetDao())
@@ -79,29 +84,80 @@ class EqViewModel(application: Application) : AndroidViewModel(application) {
             initialValue = emptyList()
         )
 
-        // Load default preset "Deep Bass Warmth"
-        val defaultBands = repository.builtInParametricPresets.first().second
+        // Load persisted session configuration or defaults
+        val savedBandsJson = prefs.getString("PREF_BANDS", null)
+        val initialBands = if (savedBandsJson != null) {
+            EqRepository.deserializeBandsFromJson(savedBandsJson)
+        } else {
+            repository.builtInParametricPresets.first().second
+        }
+
+        val initialPresetName = prefs.getString("PREF_PRESET_NAME", repository.builtInParametricPresets.first().first) ?: repository.builtInParametricPresets.first().first
+        val initialPreamp = prefs.getFloat("PREF_PREAMP", 0.0f)
+        val initialGuard = prefs.getBoolean("PREF_GUARD", true)
+        val initialPeakAlerts = prefs.getBoolean("PREF_PEAK_ALERTS", true)
+        val initialPureBlack = prefs.getBoolean("PREF_PURE_BLACK", false)
+        val initialAccentHex = prefs.getString("PREF_ACCENT_HEX", HeroAccentColors.DefaultOrange) ?: HeroAccentColors.DefaultOrange
+        val initialGraphicMode = prefs.getBoolean("PREF_GRAPHIC_MODE", false)
+        val initialThemeModeStr = prefs.getString("PREF_THEME_MODE", AppThemeMode.DARK.name) ?: AppThemeMode.DARK.name
+        val initialThemeMode = try { AppThemeMode.valueOf(initialThemeModeStr) } catch (e: Exception) { AppThemeMode.DARK }
+        val initialQFactorScale = prefs.getFloat("PREF_Q_FACTOR_SCALE", 1.0f)
+
         _uiState.value = _uiState.value.copy(
-            bands = defaultBands,
-            activePresetName = repository.builtInParametricPresets.first().first,
-            selectedBandId = defaultBands.firstOrNull()?.id
+            bands = initialBands,
+            activePresetName = initialPresetName,
+            preampDb = initialPreamp,
+            guardEnabled = initialGuard,
+            peakAlertsEnabled = initialPeakAlerts,
+            pureBlackOled = initialPureBlack,
+            customAccentHex = initialAccentHex,
+            isGraphicEqMode = initialGraphicMode,
+            themeMode = initialThemeMode,
+            qFactorScale = initialQFactorScale,
+            selectedBandId = initialBands.firstOrNull()?.id
         )
 
-        // Automatically sync DSP config on every UI state change (band frequency, gain, preamp, etc.)
+        // Automatically sync DSP config when audio parameters change
+        viewModelScope.launch {
+            _uiState
+                .map { Triple(it.bands, it.preampDb, it.qFactorScale) }
+                .distinctUntilChanged()
+                .collect { (bands, preampDb, qFactorScale) ->
+                    try {
+                        audioManager.updateDspConfig(bands, preampDb, qFactorScale)
+                    } catch (e: Throwable) {
+                        e.printStackTrace()
+                    }
+                }
+        }
+
+        // Real-time automatic background saver flow
         viewModelScope.launch {
             _uiState.collect { state ->
-                audioManager.updateDspConfig(state.bands, state.preampDb)
+                prefs.edit().apply {
+                    putString("PREF_BANDS", EqRepository.serializeBandsToJson(state.bands))
+                    putString("PREF_PRESET_NAME", state.activePresetName)
+                    putFloat("PREF_PREAMP", state.preampDb)
+                    putBoolean("PREF_GUARD", state.guardEnabled)
+                    putBoolean("PREF_PEAK_ALERTS", state.peakAlertsEnabled)
+                    putBoolean("PREF_PURE_BLACK", state.pureBlackOled)
+                    putString("PREF_ACCENT_HEX", state.customAccentHex)
+                    putBoolean("PREF_GRAPHIC_MODE", state.isGraphicEqMode)
+                    putString("PREF_THEME_MODE", state.themeMode.name)
+                    putFloat("PREF_Q_FACTOR_SCALE", state.qFactorScale)
+                    apply()
+                }
             }
         }
     }
 
     private fun syncDsp() {
-        audioManager.updateDspConfig(_uiState.value.bands, _uiState.value.preampDb)
+        audioManager.updateDspConfig(_uiState.value.bands, _uiState.value.preampDb, _uiState.value.qFactorScale)
     }
 
     // Computed total response curve
     val responseCurve: StateFlow<FloatArray> = _uiState.map { state ->
-        DspEngine.computeTotalResponseCurve(state.bands, state.preampDb)
+        DspEngine.computeTotalResponseCurve(state.bands, state.preampDb, qScale = state.qFactorScale)
     }.stateIn(viewModelScope, SharingStarted.Eagerly, FloatArray(DspEngine.NUM_FREQ_POINTS))
 
     // Computed target curve array
@@ -356,6 +412,11 @@ class EqViewModel(application: Application) : AndroidViewModel(application) {
 
     fun setCustomAccentHex(hex: String) {
         _uiState.value = _uiState.value.copy(customAccentHex = hex)
+    }
+
+    fun setQFactorScale(scale: Float) {
+        _uiState.value = _uiState.value.copy(qFactorScale = scale)
+        checkAutoGuard()
     }
 
     fun setPeakAlertsEnabled(enabled: Boolean) {

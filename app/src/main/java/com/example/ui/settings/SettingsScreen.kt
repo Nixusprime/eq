@@ -1,6 +1,8 @@
 package com.example.ui.settings
 
+import android.view.HapticFeedbackConstants
 import android.widget.Toast
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -33,21 +35,30 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Slider
+import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.model.AppThemeMode
 import com.example.model.HeroAccentColors
+import com.example.model.ExpandedColors
 import com.example.ui.components.TactileCard
 
 @Composable
@@ -57,12 +68,17 @@ fun SettingsScreen(
     customAccentHex: String,
     guardEnabled: Boolean,
     peakAlertsEnabled: Boolean,
+    qFactorScale: Float,
+    shizukuConnected: Boolean = false,
+    shizukuGranted: Boolean = false,
+    shizukuStatusMessage: String = "",
     onBackClick: () -> Unit,
     onThemeModeChange: (AppThemeMode) -> Unit,
     onPureBlackToggle: (Boolean) -> Unit,
     onAccentColorChange: (String) -> Unit,
     onGuardToggle: (Boolean) -> Unit,
     onPeakAlertsToggle: (Boolean) -> Unit,
+    onQFactorScaleChange: (Float) -> Unit,
     onImportCsv: () -> Unit,
     onExportCsv: () -> Unit,
     onSyncAutoEq: () -> Unit,
@@ -71,7 +87,9 @@ fun SettingsScreen(
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
+    val view = LocalView.current
     val scrollState = rememberScrollState()
+    var showMoreColors by remember { mutableStateOf(false) }
 
     Column(
         modifier = modifier
@@ -86,7 +104,10 @@ fun SettingsScreen(
             verticalAlignment = Alignment.CenterVertically
         ) {
             IconButton(
-                onClick = onBackClick,
+                onClick = {
+                    view.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+                    onBackClick()
+                },
                 modifier = Modifier.testTag("settings_back_button")
             ) {
                 Icon(
@@ -198,7 +219,10 @@ fun SettingsScreen(
 
                     Switch(
                         checked = pureBlackOled,
-                        onCheckedChange = onPureBlackToggle,
+                        onCheckedChange = {
+                            view.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+                            onPureBlackToggle(it)
+                        },
                         colors = SwitchDefaults.colors(
                             checkedThumbColor = Color.White,
                             checkedTrackColor = MaterialTheme.colorScheme.primary
@@ -247,7 +271,7 @@ fun SettingsScreen(
                     )
                 )
 
-                // Hex Color Options Row
+                 // Hex Color Options Row
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceEvenly,
@@ -271,7 +295,10 @@ fun SettingsScreen(
                                     color = if (isSelected) Color.White else Color.Transparent,
                                     shape = CircleShape
                                 )
-                                .clickable { onAccentColorChange(hex) }
+                                .clickable {
+                                    view.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+                                    onAccentColorChange(hex)
+                                }
                                 .testTag("accent_color_$hex"),
                             contentAlignment = Alignment.Center
                         ) {
@@ -282,6 +309,68 @@ fun SettingsScreen(
                                         .clip(CircleShape)
                                         .background(Color.White)
                                 )
+                            }
+                        }
+                    }
+                }
+
+                TextButton(
+                    onClick = {
+                        view.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+                        showMoreColors = !showMoreColors
+                    },
+                    modifier = Modifier.align(Alignment.CenterHorizontally)
+                ) {
+                    Text(if (showMoreColors) "Hide Color Palette ▴" else "More Colors... ▾", style = MaterialTheme.typography.labelMedium)
+                }
+
+                AnimatedVisibility(visible = showMoreColors) {
+                    Column(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        val chunks = ExpandedColors.Palette.chunked(9)
+                        chunks.forEach { chunk ->
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceEvenly,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                chunk.forEach { hex ->
+                                    val isSelected = customAccentHex.equals(hex, ignoreCase = true)
+                                    val colorVal = try {
+                                        Color(android.graphics.Color.parseColor(hex))
+                                    } catch (e: Exception) {
+                                        MaterialTheme.colorScheme.primary
+                                    }
+
+                                    Box(
+                                        modifier = Modifier
+                                            .size(28.dp)
+                                            .clip(CircleShape)
+                                            .background(colorVal)
+                                            .border(
+                                                width = if (isSelected) 2.dp else 0.dp,
+                                                color = if (isSelected) Color.White else Color.Transparent,
+                                                shape = CircleShape
+                                            )
+                                            .clickable {
+                                                view.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+                                                onAccentColorChange(hex)
+                                            }
+                                            .testTag("accent_color_$hex"),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        if (isSelected) {
+                                            Box(
+                                                modifier = Modifier
+                                                    .size(8.dp)
+                                                    .clip(CircleShape)
+                                                    .background(Color.White)
+                                            )
+                                        }
+                                    }
+                                }
                             }
                         }
                     }
@@ -341,7 +430,10 @@ fun SettingsScreen(
 
                     Switch(
                         checked = guardEnabled,
-                        onCheckedChange = onGuardToggle,
+                        onCheckedChange = {
+                            view.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+                            onGuardToggle(it)
+                        },
                         colors = SwitchDefaults.colors(
                             checkedThumbColor = Color.White,
                             checkedTrackColor = MaterialTheme.colorScheme.primary
@@ -371,7 +463,10 @@ fun SettingsScreen(
 
                     Switch(
                         checked = peakAlertsEnabled,
-                        onCheckedChange = onPeakAlertsToggle,
+                        onCheckedChange = {
+                            view.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+                            onPeakAlertsToggle(it)
+                        },
                         colors = SwitchDefaults.colors(
                             checkedThumbColor = Color.White,
                             checkedTrackColor = MaterialTheme.colorScheme.primary
@@ -382,7 +477,90 @@ fun SettingsScreen(
             }
         }
 
-        // Section 4: PERMISSIONS & SHIZUKU STATUS
+        // Section 4: FILTER PRECISION & BANDWIDTH
+        TactileCard(
+            modifier = Modifier.fillMaxWidth(),
+            cornerRadius = 24.dp
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(14.dp)
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.Palette,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(20.dp)
+                    )
+                    Text(
+                        text = "FILTER PRECISION & BANDWIDTH",
+                        style = MaterialTheme.typography.labelMedium.copy(
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.primary,
+                            letterSpacing = 1.2.sp
+                        )
+                    )
+                }
+
+                Text(
+                    text = "Controls filter sharpness/feathering. Higher values restrict gain changes strictly to the target frequency. Lower values create a smoother transition across neighbouring bands.",
+                    style = MaterialTheme.typography.bodySmall.copy(
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                )
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "Filter Sharpness Scale: ${String.format("%.1fx", qFactorScale)}",
+                        style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold)
+                    )
+                    Text(
+                        text = when {
+                            qFactorScale < 0.8f -> "Wide Smooth"
+                            qFactorScale < 1.3f -> "Standard"
+                            qFactorScale < 2.0f -> "Sharp"
+                            else -> "Ultra-Narrow"
+                        },
+                        style = MaterialTheme.typography.labelMedium.copy(
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                    )
+                }
+
+                Slider(
+                    value = qFactorScale,
+                    onValueChange = { scale ->
+                        val prevTick = (qFactorScale * 10f).toInt()
+                        val newTick = (scale * 10f).toInt()
+                        if (prevTick != newTick) {
+                            view.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
+                        }
+                        onQFactorScaleChange(scale)
+                    },
+                    valueRange = 0.5f..4.0f,
+                    steps = 34,
+                    colors = SliderDefaults.colors(
+                        thumbColor = MaterialTheme.colorScheme.primary,
+                        activeTrackColor = MaterialTheme.colorScheme.primary,
+                        inactiveTrackColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.12f)
+                    ),
+                    modifier = Modifier.testTag("q_factor_scale_slider")
+                )
+            }
+        }
+
+        // Section 5: PERMISSIONS & SHIZUKU STATUS
         TactileCard(
             modifier = Modifier.fillMaxWidth(),
             cornerRadius = 24.dp
@@ -483,12 +661,39 @@ fun SettingsScreen(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Column(modifier = Modifier.weight(1f)) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Text(
+                                text = "Shizuku Binder Audio Hooking",
+                                style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold)
+                            )
+                            val statusColor = when {
+                                shizukuGranted -> Color(0xFF00E676)
+                                shizukuConnected -> Color(0xFFFFB300)
+                                else -> Color(0xFFFF5252)
+                            }
+                            Box(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(6.dp))
+                                    .background(statusColor.copy(alpha = 0.2f))
+                                    .padding(horizontal = 6.dp, vertical = 2.dp)
+                            ) {
+                                Text(
+                                    text = when {
+                                        shizukuGranted -> "HOOKED"
+                                        shizukuConnected -> "CONNECTED"
+                                        else -> "INACTIVE"
+                                    },
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.Black,
+                                    color = statusColor
+                                )
+                            }
+                        }
                         Text(
-                            text = "Shizuku Binder Audio Hooking",
-                            style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold)
-                        )
-                        Text(
-                            text = "Rootless dumpsys media.audio_flinger audio session interceptor.",
+                            text = if (shizukuStatusMessage.isNotBlank()) shizukuStatusMessage else if (shizukuGranted) "Rootless dumpsys media.audio_flinger active" else "System Session ID 0 master output fallback",
                             style = MaterialTheme.typography.bodySmall.copy(
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -500,7 +705,7 @@ fun SettingsScreen(
                         shape = RoundedCornerShape(12.dp),
                         modifier = Modifier.testTag("request_shizuku_button")
                     ) {
-                        Text("Connect Shizuku", fontSize = 11.sp)
+                        Text(if (shizukuConnected) "Status" else "Connect", fontSize = 11.sp)
                     }
                 }
             }

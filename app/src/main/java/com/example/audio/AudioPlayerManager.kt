@@ -65,6 +65,9 @@ class AudioPlayerManager(private val context: Context) {
     private var activePreampDb: Float = 0.0f
 
     @Volatile
+    private var activeQFactorScale: Float = 1.0f
+
+    @Volatile
     private var eqEnabled: Boolean = true
 
     private val biquadPool = mutableListOf<BiquadFilter>()
@@ -82,9 +85,10 @@ class AudioPlayerManager(private val context: Context) {
     /**
      * Live DSP update. Synchronizes DSP parameters to the single bound system audio session.
      */
-    fun updateDspConfig(bands: List<EqBand>, preampDb: Float, enabled: Boolean = true) {
+    fun updateDspConfig(bands: List<EqBand>, preampDb: Float, qFactorScale: Float = 1.0f, enabled: Boolean = true) {
         activeBands = bands
         activePreampDb = preampDb
+        activeQFactorScale = qFactorScale
         eqEnabled = enabled
 
         syncSystemAudioEffect(enabled, bands)
@@ -95,11 +99,14 @@ class AudioPlayerManager(private val context: Context) {
      * Prevents double audio stream attachment (no phase cancellation / comb filtering).
      */
     private fun syncSystemAudioEffect(enabled: Boolean, bands: List<EqBand>) {
-        // Determine target single session ID (Prefer Shizuku-discovered app session if available, else Session 0)
-        val targetSessionId: Int = if (ShizukuHelper.isShizukuConnected.value) {
-            val appSessions = ShizukuHelper.activeMediaSessions.value.filter { it != 0 }
-            appSessions.firstOrNull() ?: 0
-        } else {
+        val targetSessionId: Int = try {
+            if (ShizukuHelper.isShizukuConnected.value) {
+                val appSessions = ShizukuHelper.activeMediaSessions.value.filter { it != 0 }
+                appSessions.firstOrNull() ?: 0
+            } else {
+                0
+            }
+        } catch (e: Throwable) {
             0
         }
 
@@ -114,40 +121,76 @@ class AudioPlayerManager(private val context: Context) {
                 currentBoundSessionId = targetSessionId
             }
 
-            currentSystemEqualizer?.enabled = enabled
-            if (enabled && currentSystemEqualizer != null) {
-                val eq = currentSystemEqualizer!!
-                val numBands = eq.numberOfBands.toInt()
-                val minLevel = try { eq.bandLevelRange[0].toInt() } catch (e: Exception) { -1500 }
-                val maxLevel = try { eq.bandLevelRange[1].toInt() } catch (e: Exception) { 1500 }
+            val eq = currentSystemEqualizer ?: return
+            try {
+                eq.enabled = enabled
+            } catch (e: Throwable) {
+                // Ignore enabled flag set failure
+            }
+
+            if (enabled) {
+                val numBands = try { eq.numberOfBands.toInt() } catch (e: Throwable) { 0 }
+                val minLevel = try { eq.bandLevelRange[0].toInt() } catch (e: Throwable) { -1500 }
+                val maxLevel = try { eq.bandLevelRange[1].toInt() } catch (e: Throwable) { 1500 }
                 val sampleRateHz = getSystemSampleRate().toFloat()
 
                 for (i in 0 until numBands) {
-                    val centerFreqHz = try { eq.getCenterFreq(i.toShort()) / 1000f } catch (e: Exception) { 0f }
-                    val calculatedGainDb = if (centerFreqHz > 0f) {
-                        var sumGain = activePreampDb
-                        for (band in bands) {
-                            if (band.enabled) {
-                                sumGain += DspEngine.computeBandGainDb(band, centerFreqHz, sampleRateHz)
+                    val centerFreqHz = try { eq.getCenterFreq(i.toShort()) / 1000f } catch (e: Throwable) { 0f }
+                    val freqRange = try { eq.getBandFreqRange(i.toShort()) } catch (e: Throwable) { null }
+                    val minFreqHz = if (freqRange != null && freqRange.size >= 2) freqRange[0] / 1000f else (centerFreqHz * 0.5f)
+                    val maxFreqHz = if (freqRange != null && freqRange.size >= 2) freqRange[1] / 1000f else (centerFreqHz * 1.5f)
+
+                    // Collect candidate frequencies to sample across 20 Hz - 20,000 Hz for this band
+                    val sampleFreqs = mutableListOf<Float>()
+                    if (centerFreqHz > 0f) sampleFreqs.add(centerFreqHz)
+                    sampleFreqs.add(minFreqHz.coerceAtLeast(20f))
+                    sampleFreqs.add(maxFreqHz.coerceAtMost(20000f))
+                    sampleFreqs.add(((minFreqHz + maxFreqHz) / 2f).coerceIn(20f, 20000f))
+
+                    // Add any active user band frequency that falls within or near this hardware band's frequency range
+                    for (b in bands) {
+                        if (b.enabled) {
+                            val f = b.frequencyHz.coerceIn(20f, 20000f)
+                            if (f >= minFreqHz * 0.8f && f <= maxFreqHz * 1.2f) {
+                                sampleFreqs.add(f)
                             }
                         }
-                        sumGain
-                    } else {
-                        if (i < bands.size) bands[i].gainDb else 0f
                     }
-                    val bandGainMb = (calculatedGainDb * 100).toInt().coerceIn(minLevel, maxLevel)
-                    eq.setBandLevel(i.toShort(), bandGainMb.toShort())
+
+                    var maxAbsGainDb = 0f
+                    var signedPeakGainDb = activePreampDb
+
+                    for (f in sampleFreqs) {
+                        var sumGain = activePreampDb
+                        for (b in bands) {
+                            if (b.enabled) {
+                                sumGain += DspEngine.computeBandGainDb(b, f, sampleRateHz, activeQFactorScale)
+                            }
+                        }
+                        if (kotlin.math.abs(sumGain) >= maxAbsGainDb) {
+                            maxAbsGainDb = kotlin.math.abs(sumGain)
+                            signedPeakGainDb = sumGain
+                        }
+                    }
+
+                    val bandGainMb = (signedPeakGainDb * 100).toInt().coerceIn(minLevel, maxLevel)
+                    try {
+                        eq.setBandLevel(i.toShort(), bandGainMb.toShort())
+                    } catch (e: Throwable) {
+                        // Ignore band level set exception
+                    }
                 }
             }
-        } catch (e: Exception) {
-            // Fallback to Session 0 if app-specific session fails
+        } catch (e: Throwable) {
+            detachCurrentEqualizer()
             if (targetSessionId != 0) {
-                detachCurrentEqualizer()
                 try {
                     currentSystemEqualizer = Equalizer(0, 0)
                     currentBoundSessionId = 0
                     currentSystemEqualizer?.enabled = enabled
-                } catch (ignored: Exception) {}
+                } catch (ignored: Throwable) {
+                    detachCurrentEqualizer()
+                }
             }
         }
     }
@@ -156,7 +199,7 @@ class AudioPlayerManager(private val context: Context) {
         try {
             currentSystemEqualizer?.enabled = false
             currentSystemEqualizer?.release()
-        } catch (ignored: Exception) {}
+        } catch (ignored: Throwable) {}
         currentSystemEqualizer = null
         currentBoundSessionId = null
     }
@@ -197,22 +240,39 @@ class AudioPlayerManager(private val context: Context) {
         flushStateRegisters()
 
         // Ping Shizuku binder and prompt permission if connected
-        if (ShizukuHelper.pingBinder()) {
-            ShizukuHelper.requestShizukuPermission()
+        try {
+            if (ShizukuHelper.pingBinder()) {
+                ShizukuHelper.requestShizukuPermission()
+            }
+        } catch (e: Throwable) {
+            // Ignore background permission check errors
         }
 
         // Apply current DSP configuration to single active session
-        syncSystemAudioEffect(eqEnabled, activeBands)
+        try {
+            syncSystemAudioEffect(eqEnabled, activeBands)
+        } catch (e: Exception) {
+            // Safe fallback
+        }
 
         processingJob = scope.launch {
             val sampleRate = getSystemSampleRate().toFloat()
+            var sessionCheckCounter = 0
 
             while (isActive && _isPlaying.value) {
-                // Periodically verify and sync session hook
-                if (ShizukuHelper.isShizukuConnected.value) {
-                    ShizukuHelper.extractActiveMediaSessions()
+                // Periodically verify and sync session hook every ~3 seconds (50 iterations * 60ms)
+                sessionCheckCounter++
+                if (sessionCheckCounter >= 50) {
+                    sessionCheckCounter = 0
+                    try {
+                        if (ShizukuHelper.isShizukuConnected.value) {
+                            ShizukuHelper.extractActiveMediaSessions()
+                        }
+                        syncSystemAudioEffect(eqEnabled, activeBands)
+                    } catch (e: Exception) {
+                        // Prevent background loop crash
+                    }
                 }
-                syncSystemAudioEffect(eqEnabled, activeBands)
 
                 // Update FFT Spectrum and VU meters dynamically from EQ response curve
                 val currentBandsList = activeBands

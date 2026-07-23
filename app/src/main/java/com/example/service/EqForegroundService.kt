@@ -19,37 +19,57 @@ class EqForegroundService : Service() {
     override fun onCreate() {
         super.onCreate()
         createNotificationChannel()
+        promoteToForeground()
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        val notificationIntent = Intent(this, MainActivity::class.java)
-        val pendingIntent = PendingIntent.getActivity(
-            this,
-            0,
-            notificationIntent,
-            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
-        )
-
-        val notification = NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle("Hero Studio Equalizer")
-            .setContentText("64-Bit Studio DSP Active • Low-Latency Audio Engine")
-            .setSmallIcon(android.R.drawable.ic_media_play)
-            .setContentIntent(pendingIntent)
-            .setOngoing(true)
-            .setPriority(NotificationCompat.PRIORITY_LOW)
-            .build()
-
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            startForeground(
-                NOTIFICATION_ID,
-                notification,
-                ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK
-            )
-        } else {
-            startForeground(NOTIFICATION_ID, notification)
-        }
-
+        promoteToForeground()
         return START_STICKY
+    }
+
+    private fun promoteToForeground() {
+        try {
+            val notificationIntent = Intent(this, MainActivity::class.java)
+            val pendingIntent = PendingIntent.getActivity(
+                this,
+                0,
+                notificationIntent,
+                PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+            )
+
+            val notification = NotificationCompat.Builder(this, CHANNEL_ID)
+                .setContentTitle("Hero Studio Equalizer")
+                .setContentText("64-Bit Studio DSP Active • Low-Latency Audio Engine")
+                .setSmallIcon(android.R.drawable.ic_media_play)
+                .setContentIntent(pendingIntent)
+                .setOngoing(true)
+                .setPriority(NotificationCompat.PRIORITY_LOW)
+                .build()
+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                try {
+                    startForeground(
+                        NOTIFICATION_ID,
+                        notification,
+                        ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK
+                    )
+                } catch (e: Throwable) {
+                    try {
+                        startForeground(NOTIFICATION_ID, notification)
+                    } catch (e2: Throwable) {
+                        e2.printStackTrace()
+                    }
+                }
+            } else {
+                try {
+                    startForeground(NOTIFICATION_ID, notification)
+                } catch (e: Throwable) {
+                    e.printStackTrace()
+                }
+            }
+        } catch (e: Throwable) {
+            e.printStackTrace()
+        }
     }
 
     private fun createNotificationChannel() {

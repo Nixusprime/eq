@@ -175,8 +175,14 @@ fun VerticalIndentedFader(
                     if ((prevVal < zeroCrossingNormalized && clamped >= zeroCrossingNormalized) ||
                         (prevVal > zeroCrossingNormalized && clamped <= zeroCrossingNormalized)
                     ) {
-                        view.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
+                        view.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
                     }
+                }
+                // Add incremental tick haptics
+                val prevTick = (prevVal * 20f).toInt()
+                val newTick = (clamped * 20f).toInt()
+                if (prevTick != newTick) {
+                    view.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
                 }
                 onValueChange(clamped)
             }

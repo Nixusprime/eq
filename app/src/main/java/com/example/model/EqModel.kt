@@ -125,3 +125,21 @@ object BandColors {
         return Palette[index % Palette.size]
     }
 }
+
+/**
+ * Expanded Color Palette for rich node & calibration options.
+ */
+object ExpandedColors {
+    val Palette = listOf(
+        "#FF3B30", "#EF4444", "#F87171", // Reds
+        "#F97316", "#FB923C", "#FF9500", // Oranges
+        "#FFCC00", "#FBBF24", "#F59E0B", // Yellows
+        "#4CD964", "#10B981", "#34D399", // Greens
+        "#06B6D4", "#22D3EE", "#5AC8FA", // Cyans
+        "#007AFF", "#3B82F6", "#60A5FA", // Blues
+        "#5856D6", "#6366F1", "#818CF8", // Indigo
+        "#8B5CF6", "#A78BFA", "#9D00FF", // Purple
+        "#FF2D55", "#EC4899", "#F472B6"  // Pink
+    )
+}
+

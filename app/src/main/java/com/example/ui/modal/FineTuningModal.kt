@@ -51,6 +51,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import com.example.model.BandColors
+import com.example.model.ExpandedColors
 import com.example.model.EqBand
 import com.example.model.FilterType
 import com.example.ui.components.ReadoutPill
@@ -281,38 +282,99 @@ fun FineTuningModal(
                     )
                 }
 
-                // Band Color Picker Row
-                Row(
+                // Band Color Picker Column
+                Column(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    Text("Band Color", style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold))
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        BandColors.Palette.forEach { hex ->
-                            val isColorSelected = currentBand.colorHex.equals(hex, ignoreCase = true)
-                            val dotColor = try {
-                                Color(android.graphics.Color.parseColor(hex))
-                            } catch (e: Exception) {
-                                Color(0xFFE85A3C)
-                            }
+                    var showAllNodeColors by remember { mutableStateOf(false) }
 
-                            Box(
-                                modifier = Modifier
-                                    .size(24.dp)
-                                    .clip(CircleShape)
-                                    .background(dotColor)
-                                    .border(
-                                        width = if (isColorSelected) 3.dp else 0.dp,
-                                        color = if (isColorSelected) MaterialTheme.colorScheme.onSurface else Color.Transparent,
-                                        shape = CircleShape
-                                    )
-                                    .clickable {
-                                        val updated = currentBand.copy(colorHex = hex)
-                                        currentBand = updated
-                                        onBandUpdate(updated)
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text("Band Color", style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold))
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            BandColors.Palette.forEach { hex ->
+                                val isColorSelected = currentBand.colorHex.equals(hex, ignoreCase = true)
+                                val dotColor = try {
+                                    Color(android.graphics.Color.parseColor(hex))
+                                } catch (e: Exception) {
+                                    Color(0xFFE85A3C)
+                                }
+
+                                Box(
+                                    modifier = Modifier
+                                        .size(24.dp)
+                                        .clip(CircleShape)
+                                        .background(dotColor)
+                                        .border(
+                                            width = if (isColorSelected) 3.dp else 0.dp,
+                                            color = if (isColorSelected) MaterialTheme.colorScheme.onSurface else Color.Transparent,
+                                            shape = CircleShape
+                                        )
+                                        .clickable {
+                                            view.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+                                            val updated = currentBand.copy(colorHex = hex)
+                                            currentBand = updated
+                                            onBandUpdate(updated)
+                                        }
+                                )
+                            }
+                        }
+                    }
+
+                    TextButton(
+                        onClick = {
+                            view.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+                            showAllNodeColors = !showAllNodeColors
+                        },
+                        modifier = Modifier.align(Alignment.End)
+                    ) {
+                        Text(if (showAllNodeColors) "Hide Palette ▴" else "More Colors... ▾", style = MaterialTheme.typography.labelSmall)
+                    }
+
+                    androidx.compose.animation.AnimatedVisibility(visible = showAllNodeColors) {
+                        Column(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            val colorChunks = ExpandedColors.Palette.chunked(9)
+                            colorChunks.forEach { chunk ->
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceEvenly,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    chunk.forEach { hex ->
+                                        val isColorSelected = currentBand.colorHex.equals(hex, ignoreCase = true)
+                                        val dotColor = try {
+                                            Color(android.graphics.Color.parseColor(hex))
+                                        } catch (e: Exception) {
+                                            Color(0xFFE85A3C)
+                                        }
+
+                                        Box(
+                                            modifier = Modifier
+                                                .size(20.dp)
+                                                .clip(CircleShape)
+                                                .background(dotColor)
+                                                .border(
+                                                    width = if (isColorSelected) 2.dp else 0.dp,
+                                                    color = if (isColorSelected) MaterialTheme.colorScheme.onSurface else Color.Transparent,
+                                                    shape = CircleShape
+                                                )
+                                                .clickable {
+                                                    view.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+                                                    val updated = currentBand.copy(colorHex = hex)
+                                                    currentBand = updated
+                                                    onBandUpdate(updated)
+                                                }
+                                        )
                                     }
-                            )
+                                }
+                            }
                         }
                     }
                 }

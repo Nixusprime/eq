@@ -42,6 +42,7 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.model.AppTab
 import com.example.service.EqForegroundService
+import com.example.shizuku.ShizukuCheckService
 import com.example.shizuku.ShizukuHelper
 import com.example.ui.channelboard.ChannelBoardDock
 import com.example.ui.channelboard.HeaderToolbar
@@ -75,8 +76,8 @@ class MainActivity : ComponentActivity() {
         // Start Foreground DSP Service
         EqForegroundService.startService(this)
 
-        // Initialize Shizuku Binder Check on App Launch
-        ShizukuHelper.pingBinder()
+        // Start robust Shizuku IPC monitoring service
+        ShizukuCheckService.startMonitoring()
 
         // Request runtime permissions on start
         requestPermissionsIfNeeded()
@@ -95,20 +96,23 @@ class MainActivity : ComponentActivity() {
             val leftPeakVu by viewModel.audioManager.leftPeakVu.collectAsStateWithLifecycle()
             val rightPeakVu by viewModel.audioManager.rightPeakVu.collectAsStateWithLifecycle()
 
-            val shizukuConnected by ShizukuHelper.isShizukuConnected.collectAsStateWithLifecycle()
-            val shizukuGranted by ShizukuHelper.shizukuPermissionGranted.collectAsStateWithLifecycle()
+            val shizukuStatus by ShizukuCheckService.statusState.collectAsStateWithLifecycle()
+            val shizukuConnected = shizukuStatus.isRunning
+            val shizukuGranted = shizukuStatus.isPermissionGranted
 
             var showShizukuDialog by remember { mutableStateOf(false) }
             var showShizukuNotDetectedDialog by remember { mutableStateOf(false) }
 
             val userPresets by viewModel.userPresets.collectAsStateWithLifecycle()
 
-            // Startup Shizuku binder check & permission request flow
+            // Startup Shizuku binder check
             LaunchedEffect(Unit) {
-                if (ShizukuHelper.pingBinder()) {
-                    if (!ShizukuHelper.checkShizukuPermission()) {
-                        ShizukuHelper.requestShizukuPermission()
+                try {
+                    if (ShizukuHelper.pingBinder()) {
+                        ShizukuCheckService.updateStateSafely()
                     }
+                } catch (e: Throwable) {
+                    // Safe startup fallback
                 }
             }
 
@@ -302,12 +306,17 @@ class MainActivity : ComponentActivity() {
                                     customAccentHex = uiState.customAccentHex,
                                     guardEnabled = uiState.guardEnabled,
                                     peakAlertsEnabled = uiState.peakAlertsEnabled,
+                                    qFactorScale = uiState.qFactorScale,
+                                    shizukuConnected = shizukuStatus.isRunning,
+                                    shizukuGranted = shizukuStatus.isPermissionGranted,
+                                    shizukuStatusMessage = shizukuStatus.statusMessage,
                                     onBackClick = { viewModel.setTab(AppTab.EQUALIZER) },
                                     onThemeModeChange = { mode -> viewModel.setThemeMode(mode) },
                                     onPureBlackToggle = { enabled -> viewModel.setPureBlackOled(enabled) },
                                     onAccentColorChange = { hex -> viewModel.setCustomAccentHex(hex) },
                                     onGuardToggle = { enabled -> viewModel.setGuardEnabled(enabled) },
                                     onPeakAlertsToggle = { enabled -> viewModel.setPeakAlertsEnabled(enabled) },
+                                    onQFactorScaleChange = { scale -> viewModel.setQFactorScale(scale) },
                                     onImportCsv = {
                                         Toast.makeText(this@MainActivity, "CSV Import dialog", Toast.LENGTH_SHORT).show()
                                     },
@@ -361,6 +370,8 @@ class MainActivity : ComponentActivity() {
 
                         // Shizuku Service Not Detected Alert Dialog
                         if (showShizukuNotDetectedDialog) {
+                            val context = androidx.compose.ui.platform.LocalContext.current
+                            val isShizukuInstalled = ShizukuHelper.isShizukuInstalled(context)
                             AlertDialog(
                                 onDismissRequest = { showShizukuNotDetectedDialog = false },
                                 icon = {
@@ -372,28 +383,52 @@ class MainActivity : ComponentActivity() {
                                 },
                                 title = {
                                     Text(
-                                        text = "Shizuku Not Detected",
+                                        text = "Shizuku Not Running",
                                         fontWeight = FontWeight.Bold
                                     )
                                 },
                                 text = {
                                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                         Text(
-                                            text = "Shizuku service not detected. Please start Shizuku to enable system-wide EQ audio hooking.",
+                                            text = "Shizuku service is not currently active.",
                                             style = MaterialTheme.typography.bodyMedium,
                                             fontWeight = FontWeight.SemiBold
                                         )
-                                        Spacer(modifier = Modifier.height(4.dp))
                                         Text(
-                                            text = "Note: Operating in Global Session 0 fallback mode.",
+                                            text = "Note: Shizuku permissions are NOT found in Android System Settings -> App Info. Shizuku is a standalone manager app. Please launch Shizuku and start its service via Wireless Debugging or ADB.",
                                             style = MaterialTheme.typography.bodySmall,
                                             color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                        Text(
+                                            text = "Operating in Global Session 0 master output fallback mode.",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.primary
                                         )
                                     }
                                 },
                                 confirmButton = {
-                                    TextButton(onClick = { showShizukuNotDetectedDialog = false }) {
-                                        Text("OK", fontWeight = FontWeight.Bold)
+                                    if (isShizukuInstalled) {
+                                        TextButton(
+                                            onClick = {
+                                                showShizukuNotDetectedDialog = false
+                                                val intent = context.packageManager.getLaunchIntentForPackage("moe.shizuku.privileged.api")
+                                                    ?: context.packageManager.getLaunchIntentForPackage("moe.shizuku.api")
+                                                intent?.let { context.startActivity(it) }
+                                            }
+                                        ) {
+                                            Text("Open Shizuku App", fontWeight = FontWeight.Bold)
+                                        }
+                                    } else {
+                                        TextButton(onClick = { showShizukuNotDetectedDialog = false }) {
+                                            Text("OK", fontWeight = FontWeight.Bold)
+                                        }
+                                    }
+                                },
+                                dismissButton = {
+                                    if (isShizukuInstalled) {
+                                        TextButton(onClick = { showShizukuNotDetectedDialog = false }) {
+                                            Text("Close")
+                                        }
                                     }
                                 }
                             )
@@ -401,6 +436,8 @@ class MainActivity : ComponentActivity() {
 
                         // Shizuku Audio Hooking Status & Permission Dialog
                         if (showShizukuDialog) {
+                            val context = androidx.compose.ui.platform.LocalContext.current
+                            val isShizukuInstalled = ShizukuHelper.isShizukuInstalled(context)
                             AlertDialog(
                                 onDismissRequest = { showShizukuDialog = false },
                                 title = {
@@ -414,16 +451,16 @@ class MainActivity : ComponentActivity() {
                                         Text(if (shizukuConnected) "Shizuku Service: Connected" else "Shizuku Service: Not Running")
                                         Text(if (shizukuGranted) "Permission: Granted" else "Permission: Not Granted")
                                         Text(
-                                            text = "Active Mode: Session ID 0 (Global System Master Output)",
+                                            text = "Active Mode: " + if (shizukuGranted) "Shizuku High-Privilege Audio Session Hooking" else "Session ID 0 (Global Master Output)",
                                             fontWeight = FontWeight.SemiBold,
                                             color = MaterialTheme.colorScheme.primary
                                         )
                                         Spacer(modifier = Modifier.height(4.dp))
                                         Text(
-                                            text = "To hook individual third-party app audio streams (Spotify, YouTube, etc.):\n" +
-                                                    "1. Install Shizuku app on device.\n" +
-                                                    "2. Start Shizuku service via Wireless Debugging or ADB.\n" +
-                                                    "3. Tap 'Authorize Shizuku' below.",
+                                            text = "IMPORTANT: Shizuku permissions CANNOT be granted in Android System Settings -> App Info.\n\n" +
+                                                    "To authorize Shizuku permission:\n" +
+                                                    "1. Ensure Shizuku service is running.\n" +
+                                                    "2. Tap 'Request Permission' below to show Shizuku's authorization prompt dialog.",
                                             style = MaterialTheme.typography.bodySmall,
                                             color = MaterialTheme.colorScheme.onSurfaceVariant
                                         )
@@ -437,12 +474,25 @@ class MainActivity : ComponentActivity() {
                                             handleShizukuRequest()
                                         }
                                     ) {
-                                        Text("Authorize Shizuku & System Audio")
+                                        Text("Request Permission", fontWeight = FontWeight.Bold)
                                     }
                                 },
                                 dismissButton = {
-                                    TextButton(onClick = { showShizukuDialog = false }) {
-                                        Text("Close")
+                                    if (isShizukuInstalled) {
+                                        TextButton(
+                                            onClick = {
+                                                showShizukuDialog = false
+                                                val intent = context.packageManager.getLaunchIntentForPackage("moe.shizuku.privileged.api")
+                                                    ?: context.packageManager.getLaunchIntentForPackage("moe.shizuku.api")
+                                                intent?.let { context.startActivity(it) }
+                                            }
+                                        ) {
+                                            Text("Open Shizuku App")
+                                        }
+                                    } else {
+                                        TextButton(onClick = { showShizukuDialog = false }) {
+                                            Text("Close")
+                                        }
                                     }
                                 }
                             )
@@ -471,28 +521,40 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun handleShizukuRequest() {
-        if (ShizukuHelper.pingBinder()) {
-            ShizukuHelper.requestShizukuPermission { granted ->
-                if (granted) {
-                    val sessions = ShizukuHelper.extractActiveMediaSessions()
-                    Toast.makeText(
-                        this,
-                        "Shizuku Granted! Hooked Audio Sessions: ${sessions.joinToString()}",
-                        Toast.LENGTH_LONG
-                    ).show()
-                } else {
-                    Toast.makeText(
-                        this,
-                        "Shizuku Denied. Operating in Global Session Mode (ID: 0)",
-                        Toast.LENGTH_LONG
-                    ).show()
+        try {
+            if (ShizukuHelper.pingBinder()) {
+                ShizukuHelper.requestShizukuPermission { granted ->
+                    try {
+                        if (granted) {
+                            val sessions = ShizukuHelper.extractActiveMediaSessions()
+                            Toast.makeText(
+                                this,
+                                "Shizuku Granted! Hooked Audio Sessions: ${sessions.joinToString()}",
+                                Toast.LENGTH_LONG
+                            ).show()
+                        } else {
+                            Toast.makeText(
+                                this,
+                                "Shizuku Denied. Operating in Global Session Mode (ID: 0)",
+                                Toast.LENGTH_LONG
+                            ).show()
+                        }
+                    } catch (e: Throwable) {
+                        e.printStackTrace()
+                    }
                 }
+            } else {
+                Toast.makeText(
+                    this,
+                    "Shizuku Binder Not Running. Operating in Global Session Mode (ID: 0)",
+                    Toast.LENGTH_LONG
+                ).show()
             }
-        } else {
+        } catch (e: Throwable) {
             Toast.makeText(
                 this,
-                "Shizuku Binder Not Running. Operating in Global Session Mode (ID: 0)",
-                Toast.LENGTH_LONG
+                "Operating in Global Session Mode (ID: 0)",
+                Toast.LENGTH_SHORT
             ).show()
         }
     }
